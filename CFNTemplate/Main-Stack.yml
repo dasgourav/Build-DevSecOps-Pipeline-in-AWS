@@ -1,0 +1,191 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: >-
+  AWS CloudFormation Sample Template AutoScalingRollingUpdates: Create a load
+  balanced, Auto Scaled sample website. This example creates an Auto Scaling
+  group behind a load balancer with a simple health check. The AutoScaling
+  launch configuration includes an update policy that will keep 1 instances
+  running while doing an autoscaling rolling upgrade.
+Parameters:
+  Environment:
+    Type: String
+    Description: S3Bucket Path where the templates are stored
+  AmazonLinux2ImageID:
+   Description: "Amazon Linux 2 Latest AMI ID"
+   Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+
+Resources:
+  myVPC:
+    Type: 'AWS::EC2::VPC'
+    Properties:
+      CidrBlock: 10.10.0.0/16
+      InstanceTenancy: default
+      EnableDnsSupport: 'true'
+      EnableDnsHostnames: 'true'
+  subnet1:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      CidrBlock: 10.10.10.0/24
+      VpcId: !Ref myVPC
+      AvailabilityZone: !Select 
+       - 0
+       - !GetAZs 
+         Ref: 'AWS::Region'      
+  subnet2:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      CidrBlock: 10.10.20.0/24
+      VpcId: !Ref myVPC
+      AvailabilityZone: !Select 
+       - 1
+       - !GetAZs 
+         Ref: 'AWS::Region'       
+  InternetGateway:
+    Type: 'AWS::EC2::InternetGateway'
+    DependsOn: myVPC
+  AttachGateway:
+    Type: 'AWS::EC2::VPCGatewayAttachment'
+    Properties:
+      VpcId: !Ref myVPC
+      InternetGatewayId: !Ref InternetGateway 
+      
+  # Public route tables for the subnets:
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref myVPC
+      Tags:
+      - Key: Name
+        Value: Public  
+  PublicRoute:   # Public route table has direct routing to IGW:
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway	        
+  PublicSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref subnet1
+      RouteTableId: !Ref PublicRouteTable
+  PublicSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref subnet2
+      RouteTableId: !Ref PublicRouteTable                       
+  ServerGroup:
+    Type: 'AWS::AutoScaling::AutoScalingGroup'
+    CreationPolicy:
+      ResourceSignal:
+        Timeout: PT15M
+        Count: '1'
+    UpdatePolicy:
+      AutoScalingRollingUpdate:
+        MaxBatchSize: '1'
+        MinInstancesInService: '1'
+        PauseTime: PT15M
+        WaitOnResourceSignals: 'true'
+    Properties:
+      VPCZoneIdentifier: 
+       - !Ref subnet1
+       - !Ref subnet2
+      LaunchConfigurationName: !Ref LaunchConfig
+      MinSize: '1'
+      MaxSize: '2'
+      TargetGroupARNs:
+        - !Ref ALBTargetGroup
+      Tags:
+        - Key: Name
+          Value: !Sub "ServerGroup-${Environment}-EC2"
+          PropagateAtLaunch: true          
+  LaunchConfig:
+    Type: 'AWS::AutoScaling::LaunchConfiguration'
+    Properties:
+      ImageId: !Ref 'AmazonLinux2ImageID'
+      InstanceType: t2.micro
+      AssociatePublicIpAddress: 'true'
+      SecurityGroups:
+        - !Ref InstanceSecurityGroup
+      UserData: 
+          "Fn::Base64":
+              !Sub |
+                #!/bin/bash -xe
+                # Get the latest CloudFormation package
+                yum update -y aws-cfn-bootstrap
+                exec > >(tee /var/log/user-data.log|logger -t user-data -s 2>/dev/console) 2>&1     
+                amazon-linux-extras install java-openjdk11 -y
+                amazon-linux-extras install tomcat8.5 -y           
+                wget http://csci.viu.ca/~barskym/teaching/DM2012/labs/LAB6/Lab6A.war -P /usr/share/tomcat/webapps 
+                systemctl start tomcat
+                systemctl enable tomcat
+                # All done so signal success
+                /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackId} --resource ServerGroup --region ${AWS::Region}                                
+  ApplicationLoadBalancer:
+    Type: 'AWS::ElasticLoadBalancingV2::LoadBalancer'
+    Properties:
+      Name: !Sub WebELB-${Environment}
+      Subnets:
+       - !Ref subnet1
+       - !Ref subnet2
+      SecurityGroups:
+       - !Ref ELBSecurityGroup
+    DependsOn: AttachGateway 
+       
+  ALBListener:
+    Type: 'AWS::ElasticLoadBalancingV2::Listener'
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref ALBTargetGroup
+      LoadBalancerArn: !Ref ApplicationLoadBalancer
+      Port: '80'
+      Protocol: HTTP
+  ALBTargetGroup:
+    Type: 'AWS::ElasticLoadBalancingV2::TargetGroup'
+    Properties:
+      HealthCheckIntervalSeconds: 30
+      HealthCheckPath: /sample
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 3
+      Port: 8080
+      Protocol: HTTP
+      Matcher: 
+       HttpCode: 302
+      UnhealthyThresholdCount: 5
+      VpcId: !Ref myVPC
+  InstanceSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: Enable port 8080 only from ELB SG.
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '8080'
+          ToPort: '8080'
+          SourceSecurityGroupId: !GetAtt ELBSecurityGroup.GroupId      
+      VpcId: !Ref myVPC
+      Tags:
+        - Key: Name
+          Value: !Sub "InstanceSecurityGroup-${Environment}-SG"             
+  ELBSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: Enable HTTP access to the ELB
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '80'
+          ToPort: '80'
+          CidrIp: 0.0.0.0/0
+      VpcId: !Ref myVPC
+      Tags:
+        - Key: Name
+          Value: !Sub "ELBSecurityGroup-${Environment}-SG"                    
+Outputs:
+  URL:
+    Description: URL of the website
+    Value: !Join 
+      - ''
+      - - 'http://'
+        - !GetAtt 
+          - ApplicationLoadBalancer
+          - DNSName
+        - '/Lab6A'  

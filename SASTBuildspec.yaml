@@ -1,0 +1,22 @@
+---
+version: 0.2
+
+phases:
+  install:
+    commands:
+# Installing Insider CLI to do SAST Check
+      - echo Installing Insider CLI - `pwd`  
+      - mkdir /opt/insider      
+      - wget https://github.com/insidersec/insider/releases/download/2.1.0/insider_2.1.0_linux_x86_64.tar.gz -P /opt/insider
+      - tar -xvf /opt/insider/insider_2.1.0_linux_x86_64.tar.gz -C /opt/insider    
+      - chmod +x /opt/insider/insider
+      - export PATH=/opt/insider/:$PATH
+      - echo Insider CLI installation complete `date`   
+  build:
+    commands:
+# Running Insider CLI for SAST Check    
+      - echo Starting Insider CLI scanning `date` in `pwd`
+      - insider --tech $TechnologyStack --target . -security 20
+      
+artifacts:
+  files: 'report-*'

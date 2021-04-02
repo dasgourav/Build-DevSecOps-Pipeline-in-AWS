@@ -1,0 +1,889 @@
+---
+AWSTemplateFormatVersion: "2010-09-09"
+
+Description: >
+    Resources to build the entire AWS DevSecOps Pipeline to check of Vulnerabilities. 
+Parameters:
+  CodeCommitRepositoryName:
+    Type: String
+    Default: AWSDevSecOpsTutorial
+  CodeCommitRepositoryDescription:
+    Type: String
+    Default: 'A Sample DevSecOps Project to add various security stages in the SDLC'
+  TemplateFolder:
+    Description: The Folder that contains your Cloud Formation templates, like cfn/ or ./
+    Type: String
+    Default: CFNTemplate/
+    MinLength: 2
+  WeightCoefficientsFail:
+    Description: Weight coefficient for failing violations. 
+    Type: Number
+    Default: 20
+    MinValue: 0
+    MaxValue: 100
+  WeightCoefficientsWarn:
+    Description: Weight coefficient for warning. 
+    Type: Number
+    Default: 1
+    MinValue: 0
+    MaxValue: 100
+  FailBuild:
+    Description: Whether to fail the cfn-nag code-build stage when security findings are detected based on weight coefficient.  
+    Type: String
+    AllowedValues: [true, false]
+    Default: false
+  EnableCFNCheck:
+    Description: Whether to enable cfn-nag, which requires Security Hub to be enabled in your AWS region where you are running the template.
+    Type: String
+    AllowedValues: [true, false]   
+  S3BucketSources:
+    Type: String
+    Description: S3 bucket with sources 
+    MaxLength: 63
+    MinLength: 3
+    Default: awsiammedia
+  S3SourcesPrefix:
+    Type: String
+    Description: S3 prefix with sources WITH ending slash if not empty. example myprefix/
+    Default: public/sample/473_Integrating_AWS_CloudFormation_Security_Tests/    
+  FailOnCVSS:
+    Type: String
+    AllowedPattern: '[0-9]|10'
+    Description: >
+            If the score set between 0 and 10 the exit code from dependency-check will indicate if a vulnerability with a CVSS score equal to or higher was identified
+    Default: 6
+  InsiderCLIScore:
+    Type: String
+    Description: >
+            If the score set between 0 and 100 the exit code from Insider CLI will indicate if a vulnerability with a score equal to or higher was identified
+    Default: 20    
+  TechnologyStack:
+    Type: String
+    Description: >
+            Enter the TechnologyStack to Run Insider CLI for Vulnerabilities. Supported technologies: android, java, ios, javascript & csharp
+    Default: java
+    AllowedValues: [android, java, ios, javascript, csharp]
+  SubscriptionEndPoint:
+    Type: String
+    Description: > 
+            Enter the Email ID to get critical alerts e.g. AWS Access key detected in the Code Repository. NOTE: To get email alerts, subscribe to the AWS Notification mailer sent to the input email-id.
+    AllowedPattern: "^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\\.[a-zA-Z0-9-.]+$"            
+  SubscriptionProtocol:
+    Type: String
+    Description: The subscription's protocol
+    AllowedValues:
+      - email
+      - email-json
+    Default: email       
+Metadata:
+  'AWS::CloudFormation::Interface':
+    ParameterGroups:
+    - Label:
+        default: Code
+      Parameters:
+       - CodeCommitRepositoryName
+       - CodeCommitRepositoryDescription
+       - TemplateFolder 
+    - Label:
+        default: CFNScanParameters
+      Parameters:
+      - EnableCFNCheck
+      - WeightCoefficientsFail
+      - WeightCoefficientsWarn
+      - FailBuild       
+    - Label:
+        default: Insider-SAST-Tool-Parameters
+      Parameters:
+      - TechnologyStack
+      - InsiderCLIScore
+    - Label:
+        default: DependencyCheckParameters
+      Parameters:
+      - FailOnCVSS
+    - Label:
+        default: AlertNotification
+      Parameters:
+      - SubscriptionEndPoint
+      - SubscriptionProtocol  
+    - Label:
+        default: General
+      Parameters:
+      - S3BucketSources
+      - S3SourcesPrefix      
+
+    ParameterLabels:
+       CodeCommitRepositoryName:
+           default: CodeCommit Repository Name
+       CodeCommitRepositoryDescription:
+           default: CodeCommit Repository Description
+       TemplateFolder:
+           default: Template folder
+       EnableCFNCheck:
+           default: Enable CFN-Nag (IaC Scanner)
+       WeightCoefficientsFail:
+           default: "Weight coefficient for failing ***Note: This is only applicable if cfn-nag is enabled***"
+       WeightCoefficientsWarn:
+           default: "Weight coefficient for warning ***Note: This is only applicable if cfn-nag is enabled***"
+       FailBuild:
+           default: "Fail build ***Note: This is only applicable if cfn-nag is enabled***"
+       TechnologyStack:
+           default: Insider CLI Technology Stack
+       FailOnCVSS:
+           default: Fail On CVSS
+       InsiderCLIScore:
+           default: Insider CLI Score
+       S3BucketSources:
+         default: S3 Bucket with sources 
+       S3SourcesPrefix:
+         default: Prefix for S3 bucket with sources
+       SubscriptionEndPoint:
+         default: Enter the Email ID
+       SubscriptionProtocol:
+         default: The subscription's protocol     
+         
+Conditions:
+  ScanWithCFN_Nag: !Equals [ !Ref EnableCFNCheck, "true" ]
+         
+Resources:
+  CodeCommitRepository:
+    Type: AWS::CodeCommit::Repository
+    Properties:
+      RepositoryName: !Ref CodeCommitRepositoryName
+      RepositoryDescription: !Ref CodeCommitRepositoryDescription
+      Code:
+        S3:
+          Bucket: automationking
+          Key: DevSecOpsTutorial.zip
+  Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+  CodebuildSASTCheck:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Artifacts:
+        Type: S3
+        Location: !Ref Bucket
+        Name: insider
+        Packaging: ZIP
+      Cache:
+        Location: !Sub '${Bucket}/insider.zip'
+        Type: S3
+      BadgeEnabled: false
+      Name: SASTCheck
+      Description: This to run Insider CLI to do Static application security testing (SAST)
+      Environment:
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/amazonlinux2-x86_64-standard:2.0
+        Type: LINUX_CONTAINER
+        EnvironmentVariables:
+          - Name: TechnologyStack
+            Value: !Ref TechnologyStack
+          - Name: Insider_CLI_Score
+            Value: !Ref InsiderCLIScore                                 
+      ServiceRole: !Ref CodebuildRole
+      Source:
+        Type: CODECOMMIT
+        Location: !GetAtt CodeCommitRepository.CloneUrlHttp      
+        BuildSpec: SASTBuildspec.yaml
+  CodebuildSecretCheck:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Artifacts:
+        Type: S3
+        Location: !Ref Bucket
+        Name: secretcheck
+        Packaging: ZIP    
+      BadgeEnabled: false
+      Name: SecretCheck
+      Description: Git Secret to check for passwords and other sensitive information in the repository
+      Environment:
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/amazonlinux2-x86_64-standard:2.0
+        Type: LINUX_CONTAINER
+        EnvironmentVariables:         
+          - Name: CloneUrlHttp
+            Value: !GetAtt CodeCommitRepository.CloneUrlHttp
+          - Name: REPOSITORY_NAME
+            Value: !GetAtt CodeCommitRepository.Name                         
+      ServiceRole: !Ref CodebuildRole
+      Source:
+        Type: CODECOMMIT
+        Location: !GetAtt CodeCommitRepository.CloneUrlHttp      
+        BuildSpec: SecretsBuildspec .yaml        
+  CodebuildOwaspDependencySCACheck:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Artifacts:
+        Type: S3
+        Location: !Ref Bucket
+        Name: owasp
+        Packaging: ZIP
+      Cache:
+        Location: !Sub '${Bucket}/owasp.zip'
+        Type: S3
+      BadgeEnabled: false
+      Name: OwaspDependencySCACheck
+      Description: This is to run Software Composition Analysis (SCA) using OWASP dependency Check
+      Environment:
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/amazonlinux2-x86_64-standard:2.0
+        Type: LINUX_CONTAINER
+        EnvironmentVariables:
+          - Name: FAIL_ON_CVSS
+            Value: !Ref FailOnCVSS         
+      ServiceRole: !Ref CodebuildRole
+      Source:
+        Type: CODECOMMIT
+        Location: !GetAtt CodeCommitRepository.CloneUrlHttp      
+        BuildSpec: SCABuildspec.yaml
+  CodeBuildDASTScan:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Artifacts:
+        Type: S3
+        Location: !Ref Bucket
+        Name: DASTCheck
+        Packaging: ZIP    
+      BadgeEnabled: false
+      Name: DASTCheck
+      Description: This is to run DAST Scan to look for vulnerabilities in web applications while they are running.
+      Environment:
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/amazonlinux2-x86_64-standard:2.0
+        Type: LINUX_CONTAINER
+        EnvironmentVariables:
+          - Name: ALB_URL
+            Value: http://example.com                   
+      ServiceRole: !Ref CodebuildRole
+      Source:
+        Type: CODECOMMIT
+        Location: !GetAtt CodeCommitRepository.CloneUrlHttp      
+        BuildSpec: DASTBuildspec.yaml
+
+  CodeBuildCFNScan:
+    Type: "AWS::CodeBuild::Project"
+    Condition: ScanWithCFN_Nag
+    Properties:
+        Name: "CFN-Scan-using-SecurityHub"
+        Description: This is to SCAN and reviews CloudFormation Template using CFN Scanner and Security Hub.         
+        Source: 
+            BuildSpec: CFNCheck.yaml
+            Location: !GetAtt CodeCommitRepository.CloneUrlHttp      
+            GitCloneDepth: 1
+            Type: "CODECOMMIT"
+        SourceVersion: refs/heads/main
+        Artifacts: 
+            Type: "NO_ARTIFACTS"
+        Cache: 
+            Type: "NO_CACHE"
+        Environment: 
+            EnvironmentVariables:
+              - Name: "FAIL_BUILD"
+                Type: PLAINTEXT
+                Value: !Ref FailBuild
+              - Name: TEMPLATE_BUCKET
+                Value: !Ref Bucket
+            ComputeType: "BUILD_GENERAL1_SMALL"
+            Image: "aws/codebuild/amazonlinux2-x86_64-standard:3.0"
+            ImagePullCredentialsType: "CODEBUILD"
+            PrivilegedMode: false
+            Type: "LINUX_CONTAINER"
+        ServiceRole: !Ref CodebuildRole
+        TimeoutInMinutes: 60
+        QueuedTimeoutInMinutes: 480
+        EncryptionKey: !Sub "arn:aws:kms:${AWS::Region}:${AWS::AccountId}:alias/aws/s3"
+        BadgeEnabled: false
+        LogsConfig: 
+            CloudWatchLogs: 
+                Status: "ENABLED"
+            S3Logs: 
+                Status: "DISABLED"
+                EncryptionDisabled: false
+# Copy the regional S3 lambda functions
+  RegionalS3Objects:
+     Type: "AWS::CloudFormation::Stack"
+     Condition: ScanWithCFN_Nag
+     Properties:
+        TemplateURL: !Sub "https://s3.amazonaws.com/${S3BucketSources}/${S3SourcesPrefix}copy-s3obj-to-regional-s3bucket.yaml"
+        Parameters:
+          S3BucketSources: !Ref S3BucketSources
+          S3SourcesPrefix: !Ref S3SourcesPrefix
+          S3Objects: "cfn-scan-functions.zip,main.yaml,copy-s3obj-to-regional-s3bucket.yaml"
+        Tags:
+         - Key: Name
+           Value: !Sub '${AWS::StackName}-CopyRegionalS3Bucket-NestedStack'
+
+  LambdaRole:  
+    Type: 'AWS::IAM::Role' 
+    Condition: ScanWithCFN_Nag
+    Properties:
+      RoleName: !Sub "ImportToSecurityHubRole-${AWS::Region}"
+      Path: /
+      AssumeRolePolicyDocument:
+         Version: "2012-10-17" 
+         Statement:            
+              Effect: Allow    
+              Principal:
+                Service: "lambda.amazonaws.com" 
+              Action: "sts:AssumeRole"        
+      Policies:
+       - PolicyName: lambda     
+         PolicyDocument: 
+             Version: '2012-10-17'           
+             Statement:        
+              - Effect: Allow  
+                Action:
+                  - s3:PutObjectAcl
+                  - s3:PutObject
+                Resource: !Join 
+                  - ''
+                  - - !GetAtt ReportsS3Bucket.Arn
+                    - "/*"
+              - Effect: Allow  
+                Action:
+                  - s3:GetBucketLocation
+                Resource: !GetAtt ReportsS3Bucket.Arn
+              - Effect: Allow  
+                Action:
+                  - logs:CreateLogStream          
+                  - logs:PutLogEvents             
+                  - logs:CreateLogGroup        
+                Resource: "*"
+              - Effect: Allow  
+                Action:
+                  - securityhub:BatchUpdateFindings        
+                  - securityhub:BatchImportFindings        
+                  - securityhub:GetFindings
+                Resource: "*"
+
+  ImportToShLambda:
+    Type: 'AWS::Lambda::Function'
+    Condition: ScanWithCFN_Nag
+    Properties:
+      Description: 'Import report to Security Hub'
+      Code:
+        S3Bucket: !GetAtt RegionalS3Objects.Outputs.RegionalS3Bucket
+        S3Key: !Sub '${S3SourcesPrefix}cfn-scan-functions.zip'
+      Handler: import_findings_security_hub.lambda_handler
+      FunctionName: ImportToSecurityHub
+      MemorySize: 128
+      Timeout: 21
+      Runtime: python3.8
+      Role: !GetAtt LambdaRole.Arn
+      Environment:
+        Variables:
+          ReportsS3Bucket: 
+            !Select [1, !Split [':::', !GetAtt ReportsS3Bucket.Arn]]
+          WeightFailing: !Ref WeightCoefficientsFail  
+          WeightWarning: !Ref WeightCoefficientsWarn
+
+  ReportsS3Bucket:
+    Type: AWS::S3::Bucket
+    Condition: ScanWithCFN_Nag
+    Properties: 
+      BucketName: !Join
+        - "-"
+        - - 'aws-sec-build-reports'
+          - !Select
+            - 0
+            - !Split
+              - "-"
+              - !Select
+                - 2
+                - !Split
+                  - "/"
+                  - !Ref "AWS::StackId"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: Enabled                
+  CodebuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName:
+        Fn::Sub: CodebuildRole-${AWS::StackName}    
+      Path: /
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Principal:
+              Service:
+                - codebuild.amazonaws.com
+            Effect: Allow
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: codebuild-service-role-devsecops-cicd
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - !If
+               - ScanWithCFN_Nag
+               - Effect: Allow  
+                 Action:
+                   - lambda:InvokeFunction
+                 Resource: !GetAtt ImportToShLambda.Arn
+               - !Ref AWS::NoValue                   
+              - Effect: Allow
+                Action:
+                  - codecommit:GitPull 
+                Resource: !GetAtt CodeCommitRepository.Arn    
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/*'
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - s3:GetBucketAcl
+                  - s3:GetBucketLocation
+                  - s3:ListBucket 
+                Resource:
+                  - !Sub
+                      - '${BucketArn}*'
+                      - BucketArn: !GetAtt Bucket.Arn
+              - Effect: Allow
+                Action:
+                  - codebuild:CreateReportGroup
+                  - codebuild:CreateReport
+                  - codebuild:UpdateReport
+                  - codebuild:BatchPutTestCases
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:codebuild:${AWS::Region}:${AWS::AccountId}:report-group/*SecurityReports'
+  CodePipelineRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      RoleName:
+        Fn::Sub: CodePipelineRole-${AWS::StackName}
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          -
+            Effect: "Allow"
+            Principal:
+              Service:
+                - "codepipeline.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+      Path: /
+      Policies:
+        -
+          PolicyName: "CodePipelineDevSecOpsAccessPolicy"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              -
+                Effect: "Allow"
+                Action:
+                  - "s3:DeleteObject"
+                  - "s3:GetObject"
+                  - "s3:GetObjectVersion"
+                  - "s3:ListBucket"
+                  - "s3:PutObject"
+                  - "s3:GetBucketPolicy"
+                Resource:
+                  - !Sub
+                      - '${BucketArn}*'
+                      - BucketArn: !GetAtt Bucket.Arn                    
+              -
+                Effect: "Allow"
+                Action:
+                  - "codecommit:ListBranches"
+                  - "codecommit:ListRepositories"
+                  - "codecommit:BatchGetRepositories"
+                  - "codecommit:Get*"
+                  - "codecommit:GitPull"
+                  - "codecommit:UploadArchive"
+                Resource:               
+                  - !GetAtt CodeCommitRepository.Arn 
+              -
+                Effect: "Allow"
+                Action:
+                  - "codebuild:StartBuild"
+                  - "codebuild:BatchGetBuilds"
+                Resource: 
+                 - !GetAtt CodebuildOwaspDependencySCACheck.Arn
+                 - !GetAtt CodebuildSASTCheck.Arn
+                 - !GetAtt CodebuildSecretCheck.Arn
+                 - !GetAtt CodeBuildDASTScan.Arn
+                 - !If
+                  - ScanWithCFN_Nag
+                  - !GetAtt CodeBuildCFNScan.Arn 
+                  - !Ref AWS::NoValue                  
+              -
+                Effect: "Allow"
+                Action:
+                  - "iam:PassRole"
+                Resource:
+                  - Fn::Sub: arn:aws:iam::${AWS::AccountId}:role/CloudFormationRole-${AWS::StackName}
+              -
+                Effect: "Allow"
+                Action:
+                  - "cloudformation:CreateChangeSet"
+                  - "cloudformation:CreateStack"
+                  - "cloudformation:CreateUploadBucket"
+                  - "cloudformation:DeleteStack"
+                  - "cloudformation:Describe*"
+                  - "cloudformation:List*"
+                  - "cloudformation:UpdateStack"
+                  - "cloudformation:ValidateTemplate"
+                  - "cloudformation:ExecuteChangeSet"
+                  - "cloudformation:DeleteChangeSet"
+                Resource:
+                  - Fn::Sub: arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/Pre-Prod-${AWS::StackName}*
+  CloudFormationRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      RoleName:
+        Fn::Sub: CloudFormationRole-${AWS::StackName}
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          -
+            Effect: "Allow"
+            Principal:
+              Service:
+                - "cloudformation.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+      Path: /
+      Policies:
+        -
+          PolicyName: "CloudFormationDevSecOpsFCFNAccessPolicy"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:             
+              -
+                Effect: "Allow"
+                Action:
+                  - "ec2:Describe*"
+                  - "ec2:CreateSecurityGroup"
+                  - "autoscaling:Describe*"
+                  - "elasticloadbalancing:Describe*"
+                  - "elasticloadbalancing:CreateLoadBalancer"
+                  - "autoscaling:CreateAutoScalingGroup"
+                  - "autoscaling:CreateLaunchConfiguration"
+                Resource:
+                  - "*"
+              -
+                Effect: "Allow"
+                Action:
+                  - "ec2:AttachNetworkInterface"
+                  - "ec2:AttachVolume"
+                  - "ec2:AuthorizeSecurityGroupIngress"
+                  - "ec2:CreateNetworkInterface"
+                  - "ec2:CreateVolume"
+                  - "ec2:DeleteSecurityGroup"
+                  - "ec2:RevokeSecurityGroupIngress"
+                  - "ec2:RevokeSecurityGroupEgress"
+                  - "ec2:DeleteTags"
+                  - "ec2:DeleteVolume"
+                  - "ec2:DetachNetworkInterface"
+                  - "ec2:DetachVolume"
+                  - "ec2:MonitorInstances"
+                  - "ec2:RebootInstances"
+                  - "ec2:ReleaseAddress"
+                  - "ec2:RunInstances"
+                  - "ec2:StartInstances"
+                  - "ec2:StopInstances"
+                  - "ec2:TerminateInstances"
+                  - "ec2:UnmonitorInstances"
+                Resource:
+                  - Fn::Sub: arn:aws:ec2:${AWS::Region}::image/*
+                  - Fn::Sub: arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:instance/*
+                  - Fn::Sub: arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:internet-gateway/*
+                  - Fn::Sub: arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:key-pair/*
+                  - Fn::Sub: arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:network-interface/*
+                  - Fn::Sub: arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:security-group/*
+                  - Fn::Sub: arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:subnet/*
+                  - Fn::Sub: arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:volume/*
+              -
+                Effect: "Allow"
+                Action:
+                  - "elasticloadbalancing:*"
+                Resource:
+                  - Fn::Sub: arn:aws:elasticloadbalancing:${AWS::Region}:${AWS::AccountId}:loadbalancer/app/WebELB*
+                  - Fn::Sub: arn:aws:elasticloadbalancing:${AWS::Region}:${AWS::AccountId}:listener/app/WebELB*
+                  - Fn::Sub: arn:aws:elasticloadbalancing:${AWS::Region}:${AWS::AccountId}:listener-rule/app/WebELB*
+                  - Fn::Sub: arn:aws:elasticloadbalancing:${AWS::Region}:${AWS::AccountId}:targetgroup/Pre-P*
+              -
+                Effect: "Allow"
+                Action:
+                  - "autoscaling:*"
+                Resource:
+                  - Fn::Sub: arn:aws:autoscaling:${AWS::Region}:${AWS::AccountId}:autoScalingGroup:*:autoScalingGroupName/Pre-Prod-${AWS::StackName}-ServerGroup-*
+                  - Fn::Sub: arn:aws:autoscaling:${AWS::Region}:${AWS::AccountId}:launchConfiguration:*:launchConfigurationName/Pre-Prod-${AWS::StackName}-LaunchConfig-*
+              -
+                Effect: "Allow"
+                Action:
+                  - "s3:GetObject"
+                  - "s3:ListBucket"
+                Resource: 
+                  - !Sub
+                      - '${BucketArn}*'
+                      - BucketArn: !GetAtt Bucket.Arn
+              -
+                Effect: "Allow"
+                Action:
+                  - "ec2:CreateVpc"
+                  - "ec2:DeleteVpc" 
+                  - "ec2:CreateSubnet"
+                  - "ec2:DeleteSubnet"
+                  - "ec2:DescribeAvailabilityZones"
+                  - "ec2:CreateRouteTable"
+                  - "ec2:DeleteRouteTable"
+                  - "ec2:CreateRoute"
+                  - "ec2:DeleteRoute"
+                  - "ec2:CreateInternetGateway"
+                  - "ec2:DeleteInternetGateway"
+                  - "ec2:AttachInternetGateway"
+                  - "ec2:AssociateRouteTable"
+                  - "ec2:ModifyVpcAttribute"
+                  - "ec2:CreateTags"
+                  - "ec2:DeleteTags"
+                  - "ec2:DisassociateRouteTable"
+                  - "ec2:DetachInternetGateway"
+                  - "ssm:GetParameters"                  
+                Resource:
+                  - "*"                  
+              -
+                Effect: "Allow"
+                Action:
+                  - "ssm:GetParameters"
+                Resource: 
+                  - Fn::Sub: arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2       
+                                                                     
+  DeployPipeline:
+    Type: "AWS::CodePipeline::Pipeline"
+    Properties:
+      Name: DevSecOpsAWSPipeline
+      RoleArn:
+          Fn::GetAtt: [ CodePipelineRole, Arn ]
+      Stages:
+        -
+          Name: CodeRepository
+          Actions:
+            -
+              Name: CloudSecurityStaticCodeAnalyser
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Version: 1
+                Provider: CodeCommit
+              OutputArtifacts:
+                -
+                  Name: CloudSecurityStaticCodeAnalyserOutput
+              Configuration:
+                BranchName: main
+                RepositoryName: !GetAtt CodeCommitRepository.Name
+              RunOrder: 1
+        -
+          Name: SecurityValidation
+          Actions:
+            -
+              Name: SAST-Check
+              InputArtifacts:
+                - Name: CloudSecurityStaticCodeAnalyserOutput
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Version: 1
+                Provider: CodeBuild
+              OutputArtifacts:
+                -
+                  Name: SASTCheckArtifact
+              Configuration:
+                ProjectName:
+                  Ref: CodebuildSASTCheck
+              RunOrder: 1
+            -
+              Name: Secrets-Check
+              InputArtifacts:
+                - Name: CloudSecurityStaticCodeAnalyserOutput
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Version: 1
+                Provider: CodeBuild
+              OutputArtifacts:
+                -
+                  Name: SecretCheckArtifact
+              Configuration:
+                ProjectName:
+                  Ref: CodebuildSecretCheck
+              RunOrder: 1              
+            -
+              Name: SCA-Check
+              InputArtifacts:
+                - Name: CloudSecurityStaticCodeAnalyserOutput
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Version: 1
+                Provider: CodeBuild
+              OutputArtifacts:
+                -
+                  Name: OwaspDependencySCACheckArtifact
+              Configuration:
+                ProjectName:
+                  Ref: CodebuildOwaspDependencySCACheck
+              RunOrder: 1         
+            - !If
+             - ScanWithCFN_Nag
+             - Name: IaC-Check
+               InputArtifacts:
+                 - Name: CloudSecurityStaticCodeAnalyserOutput
+               ActionTypeId:
+                 Category: Build
+                 Owner: AWS
+                 Version: 1
+                 Provider: CodeBuild
+               OutputArtifacts:
+                 -
+                   Name: CFNScanArtifact
+               Configuration:
+                 ProjectName:
+                   Ref: CodeBuildCFNScan
+               RunOrder: 1
+             - !Ref AWS::NoValue                         
+        -
+          Name: Pre-Prod
+          Actions:
+            -
+              Name: CreatePre-ProdChangeSet
+              InputArtifacts:
+                -
+                  Name: CloudSecurityStaticCodeAnalyserOutput
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Version: 1
+                Provider: CloudFormation
+              OutputArtifacts:
+                -
+                  Name: CreatedPre-ProdChangeSet
+              Configuration:
+                ActionMode: CHANGE_SET_REPLACE
+                ChangeSetName: Pre-ProdCBChangeSet
+                RoleArn:
+                  Fn::GetAtt: [ CloudFormationRole, Arn ]
+                Capabilities: CAPABILITY_NAMED_IAM
+                StackName:
+                  Fn::Sub: Pre-Prod-${AWS::StackName}
+                TemplateConfiguration: CloudSecurityStaticCodeAnalyserOutput::CFNTemplate/config-Pre-Prod.json
+                TemplatePath: CloudSecurityStaticCodeAnalyserOutput::CFNTemplate/Main-Stack.yml
+              RunOrder: 1
+            -
+              Name: ExecutePre-ProdChangeSet
+              InputArtifacts:
+                -
+                  Name: CreatedPre-ProdChangeSet
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Version: 1
+                Provider: CloudFormation
+              OutputArtifacts:
+                -
+                  Name: DeployedPre-Prod
+              Configuration:
+                ActionMode: CHANGE_SET_EXECUTE
+                ChangeSetName: Pre-ProdCBChangeSet
+                StackName:
+                  Fn::Sub: Pre-Prod-${AWS::StackName}
+              Namespace: CloudFromationDeployNamespace    
+              RunOrder: 2
+            -
+              Name: DAST-Check
+              InputArtifacts:
+                -
+                  Name: CloudSecurityStaticCodeAnalyserOutput              
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Version: 1
+                Provider: CodeBuild
+              OutputArtifacts:
+                -
+                  Name: DASTScanArtifact
+              Configuration:
+                ProjectName: !Ref CodeBuildDASTScan
+                EnvironmentVariables: '[{"name":"ALB_URL","value":"#{CloudFromationDeployNamespace.URL}","type":"PLAINTEXT"}]'          
+              RunOrder: 3              
+            -
+              Name: Prod-Approval
+              ActionTypeId:
+                Category: Approval
+                Owner: AWS
+                Version: 1
+                Provider: Manual
+              RunOrder: 4             
+      ArtifactStore:
+        Type: S3
+        Location:
+          Ref: Bucket    
+ ### Notifications
+  SNSTopic:
+    Type: AWS::SNS::Topic
+    Properties: {}
+  SNSSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      Endpoint: !Ref 'SubscriptionEndPoint'
+      Protocol: !Ref 'SubscriptionProtocol'
+      TopicArn: !Ref 'SNSTopic'
+  SNSTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      PolicyDocument:
+        Id: SNSTopicPolicy
+        Version: '2012-10-17'
+        Statement:
+         - Effect: Allow
+           Principal:
+            Service:
+             - events.amazonaws.com
+           Action: sns:Publish
+           Resource: !Ref 'SNSTopic'
+      Topics:
+      - !Ref SNSTopic       
+  CodebuildStateFailureEventRule:
+    Type: "AWS::Events::Rule"
+    Properties:
+      Description: "Rule for sending failure notifications to SNS topic"
+      EventPattern:
+        source:
+          - aws.codebuild
+        detail-type:
+          - CodeBuild Build State Change
+        detail:
+          project-name:
+            - !Ref CodebuildSecretCheck
+          build-status:
+            - FAILED
+      State: "ENABLED"
+      Targets:
+        - Arn: !Ref SNSTopic
+          Id: "CodeBuildNotifications"
+          InputTransformer:
+            InputTemplate: |
+              "***CRITICAL ALERT***: Security Validation has <build-status> for the Build Step:<project-name> due to detection of secrets in the repository. TAKE NECESSARY STEPS ASAP"
+            InputPathsMap:
+              project-name: "$.detail.project-name"
+              build-status: "$.detail.build-status"         

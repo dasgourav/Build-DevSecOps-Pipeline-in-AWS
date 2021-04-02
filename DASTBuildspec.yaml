@@ -1,0 +1,53 @@
+---
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+     java: corretto11
+    commands:
+      - yum install jq -y
+      - echo `Installing  OWASP Zed Attack Proxy (ZAP) DAST Tool` - `pwd` 
+      - wget https://github.com/zaproxy/zaproxy/releases/download/v2.10.0/ZAP_2.10.0_Linux.tar.gz
+      - value=$(echo "10ff2f6263b97b6367d97273de74a431b92b8d47b486662f79c2e8754dd1e9d7 ZAP_2.10.0_Linux.tar.gz" | sha256sum -c | head -n 1 | awk '{print $2}');
+      - echo $value
+      - if [ "$value" != OK ]; then echo -e "Computed checksum did NOT match.\r"; exit 1; fi
+      - tar -xf ZAP_2.10.0_Linux.tar.gz
+      - rm -rf ZAP_2.10.0_Linux.tar.gz
+      - export PATH=./ZAP_2.10.0:$PATH
+      - zap.sh -cmd -version
+      - zap.sh -cmd -addoninstall exportreport
+        
+  build:
+    commands:
+      - echo `Starting OWASP Zed Attack Proxy (ZAP) active scanning` `date` in `pwd` 
+      - echo Getting the host passed as an argument to the script          
+      - host=$ALB_URL
+      - echo Getting current timestamp to use it in the session name
+      - timestamp=$(date '+%s');
+      - echo Exit if host is not specified
+      - if [ -z "$host" ]; then echo -e "Please pass the host argument.\r"; exit 1; fi
+      - echo Launching the scan
+      - zap.sh -quickurl "$host" -newsession "$timestamp" -cmd;
+      - echo Defining variables that contain metadata for the report
+      - report_name="Vulnerability Report - $host"
+      - prepared_by="DevSecOpsPipeline"
+      - prepared_for="X Corp"
+      - scan_date=$(date -d @$timestamp)
+      - report_date=$(date -d @$timestamp)
+      - scan_version="N/A"
+      - report_version="N/A"
+      - report_description="Home page vulnerability report of the DevSecOps project."
+      - file_name="$timestamp"
+      - echo Getting the report generated in XHTML format
+      - zap.sh -export_report "$HOME"/"$file_name".xhtml -source_info "$report_name;$prepared_by;$prepared_for;$scan_date;$report_date;$scan_version;$report_version;$report_description" -alert_severity "t;t;f;t" -alert_details "t;t;t;t;t;t;f;f;f;f" -session "$timestamp.session" -cmd
+      - zap.sh -export_report "$HOME"/"$file_name".json -source_info "$report_name;$prepared_by;$prepared_for;$scan_date;$report_date;$scan_version;$report_version;$report_description" -alert_severity "t;t;f;t" -alert_details "t;t;t;t;t;t;f;f;f;f" -session "$timestamp.session" -cmd
+      - isarray=$(jq '.[].Sites.Alerts.AlertItem|type=="array"' "$HOME"/"$file_name".json)
+      - echo $isarray
+      - if [ "$isarray" != false ]; then jq '.[].Sites.Alerts.AlertItem[] | select(.RiskDesc == ("Medium", "High")).WASCID'  "$HOME"/"$file_name".json >>$HOME/temp.txt; else jq '.[].Sites.Alerts.AlertItem | select(.RiskDesc == ("Medium", "High")).WASCID'  "$HOME"/"$file_name".json >>$HOME/temp.txt; fi
+      - if [ $(wc -l <$HOME/temp.txt) -ge 1 ]; then echo -e "The URL contains Medium or High Vulnerabilities.Kindly check the artifacts\r"; exit 1; fi
+artifacts:
+  discard-paths: 'yes'
+  files: 
+   - '$HOME/*.xhtml'
+   - '$HOME/*.json'

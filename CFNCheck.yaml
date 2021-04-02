@@ -1,0 +1,46 @@
+version: 0.2
+phases:
+  install:
+    runtime-versions:
+      ruby: 2.6                    
+    commands:
+      - export date=`date +%Y-%m-%dT%H:%M:%S.%NZ`
+      - echo Installing cfn_nag - `pwd`
+      - gem install cfn-nag
+      - echo cfn_nag installation complete `date`
+  pre_build:
+    commands:
+      - echo "Copying child stack templates to S3"
+      - ls -l
+      - ls -l ./CFNTemplate/
+      - aws s3 sync ./CFNTemplate/ s3://"$TEMPLATE_BUCKET" --exclude "*" --include "Network-Stack.yml"
+  build:
+    commands:
+      - echo Starting cfn scanning `date` in `pwd`
+      - if [[ ! -d "CFNTemplate/" ]]; then printf "\n\nTemplate folder CFNTemplate/ does NOT exists! Fix your stack parameters.\n\n" && exit 1; fi 
+      - mkdir report || echo "dir report exists"
+      - SCAN_RESULT=$(cfn_nag_scan --fail-on-warnings --input-path  CFNTemplate/ -o json > ./report/cfn_nag.out.json && echo OK || echo FAILED)
+      - echo Completed cfn scanning `date`
+      - ls -l ./report/
+      - cat ./report/cfn_nag.out.json
+      - echo Generating report and import to Security Hub `date`
+      - | 
+        source_repository=${CODEBUILD_SRC_DIR##*/} jq  \
+        "{ \"messageType\": \"CodeScanReport\", \"reportType\": \"CFN-NAG\", \
+        \"createdAt\": env.date, \"source_repository\": env.source_repository, \
+        \"source_branch\": env.CODEBUILD_SOURCE_VERSION, \
+        \"build_id\": env.CODEBUILD_BUILD_ID, \
+        \"source_commitid\": env.CODEBUILD_RESOLVED_SOURCE_VERSION, \
+        \"report\": . }" ./report/cfn_nag.out.json > payload.json
+      - aws lambda invoke --function-name ImportToSecurityHub --payload file://payload.json ./report/junit_scan_report.xml && echo "LAMBDA_SUCCEDED" || echo "LAMBDA_FAILED"
+      - if [[ "$FAIL_BUILD" = "true" && "$SCAN_RESULT" = "FAILED" ]]; then printf "\n\nFailiing pipeline as possible insecure configurations were detected\n\n" && exit 1; fi
+      - ls -l ./report/
+      - cat ./report/junit_scan_report.xml
+reports: 
+  SecurityReports: 
+    files: 
+      - report/junit_scan_report.xml
+    discard-paths: 'yes'
+    file-format: JunitXml
+artifacts:
+  files: '*'

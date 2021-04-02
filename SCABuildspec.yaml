@@ -1,0 +1,44 @@
+---
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+     java: corretto11
+    commands:
+      - echo Installing OWASP Dependency Check SCA Tool - `pwd`
+      - gpg --keyserver hkp://keys.gnupg.net --recv-keys F9514E84AE3708288374BBBE097586CFEA37F9A6      
+      - wget https://github.com/jeremylong/DependencyCheck/releases/download/v6.1.2/dependency-check-6.1.2-release.zip 
+      - wget https://github.com/jeremylong/DependencyCheck/releases/download/v6.1.2/dependency-check-6.1.2-release.zip.asc
+      - gpg --verify dependency-check-*-release.zip.asc
+      - unzip dependency-check-*-release.zip
+      - rm -rf dependency-check-*-release.zip
+      - export PATH=dependency-check/bin:$PATH        
+  build:
+    commands:
+      - echo Starting OWASP Dependency Check scanning `date` in `pwd`    
+      - mkdir -p nvd  # Will store nvd here
+      - pwd
+      - ls -l 
+      - |
+        dependency-check.sh \
+          --project my-project \
+          -s ./src \
+          -f JUNIT \
+          --disableNuspec \
+          --disableAssembly \
+          -d nvd \
+          --failOnCVSS $FAIL_ON_CVSS \
+# Caching the nvd database so each run doesn't download the
+# entire nvd
+cache:
+  paths:
+    - nvd/**/*
+reports:
+  SCASecurityReports:
+    files:
+      - dependency-check-junit.xml
+    discard-paths: 'yes'
+    file-format: JunitXml
+artifacts: 
+  files: '*junit.xml'
