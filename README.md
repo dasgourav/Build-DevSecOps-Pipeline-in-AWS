@@ -1,8 +1,10 @@
 # Build DevSecOps Pipeline in AWS
 
-The project includes an Amazon CloudFormation template to help provision resources to build DevSecOps Pipeline in AWS. 
+The project includes an Amazon CloudFormation template to help provision resources to build DevSecOps Pipeline in AWS.
+
 [Click Here](https://github.com/dasgourav/Build-DevSecOps-Pipeline-in-AWS/blob/master/CFNTemplate/template.yaml) to check the Cloudformation Master Template which brings up the below Reference Architecture. Alternatively, it can found in the location CFNTemplate/template.yaml.
-[Click Here]https://us-east-2.console.aws.amazon.com/cloudformation/home?region=us-east-2&ref=hackernoon.com#/stacks/create/review?templateURL=https://automationking.s3.amazonaws.com/devsecops-template.yaml&stackName=DevSecOpsTutorial) to launch the AWS CloudFormation Create Stack Console with the prepopulated master template in the Ohio region. If you want to run the template on a different AWS region, change the region from the top right corner.Log in to the AWS account if you haven’t done so already.
+
+[Click Here](https://us-east-2.console.aws.amazon.com/cloudformation/home?region=us-east-2&ref=hackernoon.com#/stacks/create/review?templateURL=https://automationking.s3.amazonaws.com/devsecops-template.yaml&stackName=DevSecOpsTutorial) to launch the AWS CloudFormation Create Stack Console with the prepopulated master template in the Ohio region. If you want to run the template on a different AWS region, change the region from the top right corner.Log in to the AWS account if you haven’t done so already.
 
 ## License
 
