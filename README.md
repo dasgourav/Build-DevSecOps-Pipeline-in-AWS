@@ -13,7 +13,7 @@ The project includes an Amazon CloudFormation template to help provision resourc
 This library is licensed under the MIT-0 License. See the LICENSE file.
 
 ## Objective:
-Thus, the objective here is to demonstrate how DevSecOps works in reality. The following series split into two parts (refer below) with very simple and clear instructions to provision a CI/CD pipeline adhering to DevSecOps principles in AWS. [Click Here](https://hackernoon.com/connect-to-ec2-remote-systems-from-the-ansible-control-machine-using-aws-ssm-parameter-store-jt2k342k), to go through the Step-by-Step Tutorial. 
+Thus, the objective here is to demonstrate how DevSecOps works in reality. The following series split into two parts (refer below) with very simple and clear instructions to provision a CI/CD pipeline adhering to DevSecOps principles in AWS. [Click Here](https://hackernoon.com/devsecops-introduction-clear-instructions-on-how-to-build-a-pipeline-in-aws-part-1-5nx334e), to go through the Step-by-Step Tutorial. 
 
 ## How Does it Work:
 The tutorial has used open-source tools to build the DevSecOps pipeline to make the demo more achievable. The below diagram depicts the tools and native services used along with the security control gates applied in the process.
