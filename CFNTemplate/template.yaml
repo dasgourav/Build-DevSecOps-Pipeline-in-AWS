@@ -2,7 +2,9 @@
 AWSTemplateFormatVersion: "2010-09-09"
 
 Description: >
-    Resources to build the entire AWS DevSecOps Pipeline to check of Vulnerabilities. 
+    This template creates a CICD DevSecOps pipeline with AWS cloud-native developer services and open source Secret-Scanner, SCA, SAST, DAST & IaC-Scanner tools.
+    *NOTE*: All the resources provisioned through CloudFormation Template comes under either Free Tier Eligibility or Free Trial. In case the monthly service limit exhausted, you will be charged extra for that.
+
 Parameters:
   CodeCommitRepositoryName:
     Type: String
@@ -33,7 +35,8 @@ Parameters:
     AllowedValues: [true, false]
     Default: false
   EnableCFNCheck:
-    Description: Whether to enable cfn-nag, which requires Security Hub to be enabled in your AWS region where you are running the template.
+    Description: "Whether to enable cfn-nag or not? Note: Without enabling Security Hub in the AWS region where you are going to run the template, the following feature won't work. Thus, navigate to the following link to follow the instructions to enable Security-Hub. 
+    Link: https://github.com/dasgourav/Build-DevSecOps-Pipeline-in-AWS/raw/master/Manual/How-to-enable-Security-Hub.pdf"   
     Type: String
     AllowedValues: [true, false]   
   S3BucketSources:
